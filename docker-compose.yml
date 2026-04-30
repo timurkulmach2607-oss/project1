@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  it-inventory:
+    build: .
+    container_name: it_inventory_app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./inventory.db:/app/inventory.db
+      - ./logo.png:/app/logo.png
+    restart: unless-stopped

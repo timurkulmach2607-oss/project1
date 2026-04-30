@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+inventory.db
+uploads/
+.venv/
+.streamlit/
+*.docx
+logo.png
