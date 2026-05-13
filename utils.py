@@ -210,3 +210,45 @@ def generate_return_act_docx(assets, old_assigned_to, admin_name="Кульмач
     doc.save(buf)
     buf.seek(0)
     return buf.getvalue()
+def generate_codes_docx(assets, type_choice="QR-код"):
+    """Генерує DOCX файл із сіткою QR-кодів або штрихкодів."""
+    doc = Document()
+    
+    # Налаштування вузьких полів
+    sections = doc.sections
+    for section in sections:
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.left_margin = Inches(0.5)
+        section.right_margin = Inches(0.5)
+
+    table = doc.add_table(rows=(len(assets) + 2) // 3, cols=3)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    
+    for idx, asset in enumerate(assets):
+        row = idx // 3
+        col = idx % 3
+        cell = table.cell(row, col)
+        
+        # Очищуємо клітинку та додаємо контент
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        run = p.add_run(f"{asset.get('category', '')} {asset.get('brand', '')}\n")
+        run.bold = True
+        p.add_run(f"SN: {asset.get('serial_number', '')}\n")
+        
+        # Генерація коду
+        if type_choice == "QR-код":
+            img_buf = generate_qr(asset['barcode_data'])
+            img_width = Inches(1.5)
+        else:
+            img_buf = generate_barcode(asset['barcode_data'])
+            img_width = Inches(2.0)
+            
+        p.add_run().add_picture(img_buf, width=img_width)
+        
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()

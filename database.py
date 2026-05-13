@@ -18,7 +18,7 @@ def init_db():
             category TEXT NOT NULL,
             brand TEXT NOT NULL,
             model TEXT NOT NULL,
-            serial_number TEXT UNIQUE NOT NULL,
+            serial_number TEXT UNIQUE,
             part_number TEXT,
             description TEXT,
             status TEXT NOT NULL,
@@ -38,6 +38,11 @@ def init_db():
         
     try:
         cursor.execute("ALTER TABLE assets ADD COLUMN quantity INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        cursor.execute("ALTER TABLE assets ADD COLUMN upc TEXT")
     except sqlite3.OperationalError:
         pass
         
@@ -77,6 +82,11 @@ def init_db():
     except sqlite3.OperationalError:
         pass
         
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN session_token TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
     cursor.execute("UPDATE users SET full_name = 'Кульмач Т.В' WHERE username = 'admin' AND (full_name IS NULL OR full_name = '')")
         
     conn.commit()
@@ -105,15 +115,41 @@ def get_user_info(username):
         return row[0]
     return username
 
+def update_password(username, new_password):
+    conn = get_connection()
+    cursor = conn.cursor()
+    hashed_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    cursor.execute("UPDATE users SET password_hash = ? WHERE username = ?", (hashed_pw, username))
+    conn.commit()
+    conn.close()
+    return username
+
 def add_audit_log(username, action, details):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO audit_log (username, action, details) VALUES (?, ?, ?)",
+        "INSERT INTO audit_log (username, action, details, timestamp) VALUES (?, ?, ?, datetime('now', 'localtime'))",
         (username, action, details)
     )
     conn.commit()
     conn.close()
+
+def set_session_token(username, token):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET session_token = ? WHERE username = ?", (token, username))
+    conn.commit()
+    conn.close()
+
+def get_user_by_token(token):
+    if not token: return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE session_token = ? AND is_active = 1", (token,))
+    row = cursor.fetchone()
+    conn.close()
+    if row: return row[0]
+    return None
 
 def get_all_assets():
     conn = get_connection()
@@ -121,31 +157,36 @@ def get_all_assets():
     conn.close()
     return df
 
-def get_asset_by_serial_or_barcode(code):
+def get_assets_by_serial_or_barcode(code):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM assets WHERE serial_number = ? OR barcode_data = ?", (code, code))
-    row = cursor.fetchone()
+    like_code = f"{code}-%"
+    cursor.execute("""
+        SELECT * FROM assets 
+        WHERE serial_number = ? OR serial_number LIKE ? 
+        OR barcode_data = ? OR barcode_data LIKE ?
+        OR upc = ?
+    """, (code, like_code, code, like_code, code))
+    rows = cursor.fetchall()
     columns = [description[0] for description in cursor.description] if cursor.description else []
     conn.close()
-    if row:
-        return dict(zip(columns, row))
-    return None
+    return [dict(zip(columns, row)) for row in rows]
 
 def add_asset(asset_data, username):
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO assets (category, brand, model, serial_number, part_number, description, status, barcode_data, assigned_to, photo_path, quantity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO assets (category, brand, model, serial_number, part_number, description, status, barcode_data, assigned_to, photo_path, quantity, upc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             asset_data['category'], asset_data['brand'], asset_data['model'],
             asset_data['serial_number'], asset_data['part_number'],
             asset_data['description'], asset_data['status'], asset_data['barcode_data'],
             asset_data.get('assigned_to', 'Не призначено'),
             asset_data.get('photo_path', None),
-            asset_data.get('quantity', 1)
+            asset_data.get('quantity', 1),
+            asset_data.get('upc', None)
         ))
         conn.commit()
         qty_text = f" (Кількість: {asset_data.get('quantity', 1)})" if asset_data.get('quantity', 1) > 1 else ""
@@ -158,7 +199,7 @@ def add_asset(asset_data, username):
 
 def get_audit_log():
     conn = get_connection()
-    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC", conn)
+    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 1000", conn)
     conn.close()
     return df
 
